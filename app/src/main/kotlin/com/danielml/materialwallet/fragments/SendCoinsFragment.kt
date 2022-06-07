@@ -6,9 +6,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.view.updateLayoutParams
+import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import com.danielml.materialwallet.Global
@@ -36,7 +36,6 @@ class SendCoinsFragment : Fragment() {
     private var sendCoinsSlider: SlideToAction? = null
 
     private var selectedFee = Global.SAT_PER_KB_DEF
-    private var draggableLayout: DraggableLinearLayout? = null
 
     private val retractSlider = DialogInterface.OnClickListener { _, _ ->
         sendCoinsSlider?.retractSlider()
@@ -62,10 +61,11 @@ class SendCoinsFragment : Fragment() {
         val targetAddressText = view.findViewById<EditText>(R.id.target_address)
         val numericPad = view.findViewById<NumericPad>(R.id.amount_numeric_pad)
         val sendEverythingButton = view.findViewById<MaterialButton>(R.id.empty_wallet_button)
-        draggableLayout = view.findViewById(R.id.draggable_layout)
+        val draggableLayout = view.findViewById<DraggableLinearLayout>(R.id.draggable_layout)
+        draggableLayout.setTranslationInstant(DraggableLinearLayout.TRANSLATION_EXPANDED)
 
         sendEverythingButton.setOnClickListener {
-            numericPad.setValueString(CurrencyUtils.toNumericString(walletKit.wallet().balance))
+            numericPad.setValueString(CurrencyUtils.toNumericString(walletKit.wallet().getBalance(Wallet.BalanceType.ESTIMATED)))
         }
 
         peerSyncListener = object : PeersSyncedListener() {
@@ -112,7 +112,7 @@ class SendCoinsFragment : Fragment() {
                                 null,
                                 true,
                                 context!!.getString(R.string.insufficient_balance),
-                                (context!!.getString(R.string.current_balance) + " $balance")
+                                resources.getString(R.string.current_balance, balance)
                             ).show()
                         }
 
@@ -150,27 +150,24 @@ class SendCoinsFragment : Fragment() {
             }
         }
 
-        val feeSeekBar = view.findViewById<SeekBar>(R.id.fee_seekbar)
-        feeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                updateFeeRate(progress)
+        val feeText = view.findViewById<EditText>(R.id.network_fee_text)
+        feeText.addTextChangedListener {
+            if (feeText.text.isNotEmpty()) {
+                updateFeeRate(feeText)
             }
+        }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+        feeText.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus && feeText.text.isEmpty()) {
+                feeText.setText((selectedFee / 1000).toInt().toString())
             }
+        }
 
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-            }
-        })
-
-        updateFeeRate(feeSeekBar.progress)
+        updateFeeRate(feeText)
     }
 
-    fun updateFeeRate(seekbarProgress: Int) {
-        val feeRate = seekbarProgress + 1
-        val selectedFeeText = view?.findViewById<TextView>(R.id.selected_fee_value)
-        selectedFeeText?.text = feeRate.toString()
-
+    private fun updateFeeRate(feeText: EditText) {
+        val feeRate = feeText.text.toString().toFloat()
         selectedFee = (feeRate * 1000).toLong()
     }
 
@@ -216,8 +213,7 @@ class SendCoinsFragment : Fragment() {
             context!!.getString(R.string.total_spent),
             CurrencyUtils.toString(receiverOutput + transactionFee.toBtc())
         )
-        currentBalanceText.text =
-            (context!!.getString(R.string.current_balance) + " ${CurrencyUtils.toString(currentBalance)}")
+        currentBalanceText.text = resources.getString(R.string.current_balance, CurrencyUtils.toString(currentBalance))
         futureBalanceText.text =
             String.format(context!!.getString(R.string.future_balance), CurrencyUtils.toString(futureBalance))
 

@@ -16,7 +16,8 @@ import androidx.fragment.app.FragmentActivity
 import com.danielml.materialwallet.Global
 import com.danielml.materialwallet.R
 import com.danielml.materialwallet.layouts.TransactionCard
-import com.danielml.materialwallet.listeners.PeersSyncedListener
+import com.danielml.materialwallet.priceprovider.CoinbasePriceProvider
+import com.danielml.materialwallet.priceprovider.PriceChangeListener
 import com.danielml.materialwallet.utils.CurrencyUtils
 import com.google.android.material.button.MaterialButton
 import org.bitcoinj.core.*
@@ -24,10 +25,12 @@ import org.bitcoinj.core.listeners.BlocksDownloadedEventListener
 import org.bitcoinj.wallet.Wallet
 import org.bitcoinj.wallet.listeners.WalletCoinsReceivedEventListener
 import org.bitcoinj.wallet.listeners.WalletCoinsSentEventListener
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.*
 
 class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoinsSentEventListener,
-    BlocksDownloadedEventListener {
+    BlocksDownloadedEventListener, PriceChangeListener {
     private val handler = Handler(Looper.getMainLooper())
 
     private val walletKit = Global.globalWalletKit!!
@@ -37,8 +40,6 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
     private var blockDateUpdateThresholdMs = 1000
 
     private val transactionIdList: ArrayList<String> = ArrayList()
-
-    private var peerSyncListener: PeersSyncedListener? = null
 
     private var transactionThread: Thread? = null
 
@@ -57,16 +58,6 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
         walletKit.peerGroup().addBlocksDownloadedEventListener(this)
 
         val sendCoinsButton = view.findViewById<Button>(R.id.send_coins_button)
-
-        // Enable the send coins button if no blocks are pending
-        peerSyncListener = object : PeersSyncedListener() {
-            override fun onPeersSyncStatusChanged(synced: Boolean) {
-                handler.post {
-                    sendCoinsButton.isEnabled = synced
-                }
-            }
-        }
-        peerSyncListener?.register(walletKit)
 
         val lastBlockDate = walletKit.wallet()?.lastBlockSeenTime
         if (lastBlockDate != null) {
@@ -118,6 +109,8 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
         }
 
         setupTransactionsList()
+
+        Global.globalPriceProvider.addOnPriceChangeListener(this)
     }
 
     override fun onDestroyView() {
@@ -126,7 +119,8 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
         walletKit.wallet().removeCoinsReceivedEventListener(this)
         walletKit.wallet().removeCoinsReceivedEventListener(this)
         walletKit.peerGroup().removeBlocksDownloadedEventListener(this)
-        peerSyncListener?.unregister()
+
+        Global.globalPriceProvider.removeOnPriceChangeListener(this)
     }
 
     /*
@@ -134,6 +128,13 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
      */
     private fun getWalletBalanceView(): TextView? {
         return view?.findViewById(R.id.wallet_balance)
+    }
+
+    /*
+     * @returns the view that shall contain the wallet balance in a fiat currency
+     */
+    private fun getCurrentBalanceView(): TextView? {
+        return view?.findViewById(R.id.current_balance_text)
     }
 
     /*
@@ -152,6 +153,13 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
             if (context != null) {
                 val estimatedBalance = walletKit.wallet().getBalance(Wallet.BalanceType.ESTIMATED)
                 getWalletBalanceView()?.text = CurrencyUtils.toString(estimatedBalance)
+
+                val priceDecimal = BigDecimal.valueOf(Global.globalPriceProvider.getPrice().toDouble())
+                var fiatPrice = estimatedBalance.toBtc().multiply(priceDecimal)
+                fiatPrice = fiatPrice.setScale(2, RoundingMode.HALF_EVEN)
+
+                val fiatString = "$fiatPrice ${CoinbasePriceProvider.FIAT_CURRENCY}"
+                getCurrentBalanceView()?.text = resources.getString(R.string.current_balance, fiatString)
             }
         }
     }
@@ -183,9 +191,6 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
                     setLastBlockDate(block.time)
                 }
                 syncBalance()
-
-                // Enable the send coins button if no blocks are pending
-                sendCoinsButton?.isEnabled = (blocksLeft == 0)
             }
 
             lastBlockFetchDate = newBlockFetchDate
@@ -254,8 +259,7 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
             return
         }
 
-        val card = TransactionCard(context!!, transaction, container)
-        val cardView = card.getView()
+        val cardView = TransactionCard(context!!, transaction, container).getView()
         transactionIdList.add(transaction.txId.toString())
 
         handler.post {
@@ -265,5 +269,9 @@ class WalletFragment : Fragment(), WalletCoinsReceivedEventListener, WalletCoins
                 container.addView(cardView)
             }
         }
+    }
+
+    override fun onPriceChange(price: Float, fiat: String) {
+        syncBalance()
     }
 }
